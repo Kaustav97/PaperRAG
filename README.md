@@ -1,126 +1,122 @@
 # PaperRAG
 
-Local PDF parsing/OCR, persistent hybrid retrieval, and evidence-checked research through one explicitly configured OpenAI-compatible endpoint. Python 3.11; CPU-only ONNX embeddings; no vector server or JavaScript build.
+PaperRAG is a local research tool for PDF papers. It parses and indexes them, then answers questions strictly from indexed excerpts, checking every claim against its original cited passage rather than a model's memory. Ingest, search, and previews are local and CPU-only.
 
-## Install
+- **Local-first ingest and search.** PyMuPDF extraction with a local Tesseract OCR fallback, CPU ONNX embeddings, and embedded LanceDB hybrid retrieval — no vector server, GPU, or JavaScript build.
+- **Evidence-checked research.** Claims are verified in a separate call against their original cited excerpts; only supported, directly responsive claims become answer facts; hypotheses stay labeled as unproven.
+- **One explicit endpoint.** Research needs a base URL, API key, and three model IDs you supply; secrets live in `.env`, provider options in TOML.
+- **Recoverable storage.** Journal, chunk store, page cache, and model cache share one data directory behind a single-writer protocol.
+
+## Quickstart
+
+Prerequisites: a checkout of this repository, micromamba, and network access for initial dependencies, models, and (optionally) samples. All commands run from the checkout root.
 
 ```sh
 micromamba create -y -f environment.yml
-micromamba run -n paperrag python -m pip install -e '.[dev]'
-micromamba run -n paperrag python -m pip check
-micromamba run -n paperrag tesseract --list-langs
-```
-
-The application resolves OCR data from the running environment's `share/tessdata`, not the system installation. English `eng.traineddata` is required for English scanned pages.
-
-`environment.lock.yml` records the resolved Linux x86_64 conda builds and Python packages; `requirements.lock.txt` records the working pip pins. To reproduce that resolution, create the environment from `environment.lock.yml`, then install this checkout with `micromamba run -n paperrag python -m pip install --no-deps -e .`. The lock deliberately excludes a registry release of PaperRAG; this source checkout is the application.
-
-## Configuration
-
-Copy `paperrag.example.toml` to `paperrag.toml` and `.env.example` to `.env` as needed. No model or endpoint is selected implicitly. Process environment overrides `.env`; both override TOML. TOML paths are relative to the TOML file; other relative paths are relative to the working directory. `--data-dir` changes storage only.
-
-All LLM settings are optional for local ingest/search. Research requires `PAPERRAG_BASE_URL`, `PAPERRAG_API_KEY`, and explicit `PAPERRAG_BREAKDOWN_MODEL`, `PAPERRAG_RESEARCH_MODEL`, `PAPERRAG_SYNTHESIS_MODEL`. The same model may fill all roles. Keep credentials in the environment or `.env`, never TOML. Do not send secrets in chat.
-
-**Privacy:** retrieved excerpts and metadata sent to a hosted inference endpoint leave this machine. Parsing, OCR, embeddings, retrieval, and source previews run locally. Initial sample/model downloads require network access. Research is bounded to the indexed corpus; it does not discover literature on the web. Bind the single-user browser app to loopback; authentication and multi-user serving are not provided.
-
-Provider-specific Chat Completions arguments belong under each `[models.<stage>.options]`. Defaults are empty; the app does not force temperature, JSON-schema support, or a vendor-specific token limit. Reserved model/messages/stream/credential arguments are rejected.
-
-## Use
-
-```sh
+micromamba run -n paperrag python -m pip install -e .
 micromamba run -n paperrag paperrag download-samples
 micromamba run -n paperrag paperrag ingest papers
-micromamba run -n paperrag paperrag stats --json
-micromamba run -n paperrag paperrag search 'What non-parametric memory does RAG use?' --json
-micromamba run -n paperrag paperrag ask 'How does context position affect grounded answers?' --json
+micromamba run -n paperrag paperrag search "What non-parametric memory does RAG use?" --json
 micromamba run -n paperrag paperrag ui
 ```
 
-Open <http://127.0.0.1:8501>. Library recursively indexes local directories, paginates documents and preserves selections across pages. Research supports all or selected papers, credential-free excerpt search, and explicitly submitted research calls. Opening a source uses saved session results, not another paid query. Use Refresh library after CLI ingestion. Source cards show exact indexed excerpts and physical pages; previews/downloads require the original file to match its indexed SHA-256.
+Samples are optional: for your own PDFs, replace the download/ingest pair with `micromamba run -n paperrag paperrag ingest /path/to/pdfs`. Search returns indexed excerpts with source/page metadata; the UI is at <http://127.0.0.1:8501>. Ingest and search need no credentials or GPU, but the first run downloads the embedding model, so network is required.
 
-`ingest`, `index`, `stats`, `search`, and `ask` accept `--data-dir PATH`. `search` accepts `--top-k 1..50`; `search` and `ask` accept repeated `--document-id HEX` filters, including during expansion. `stats`, `search`, and `ask` support `--json` (stdout only; progress/errors are stderr). Errors exit nonzero; a completed insufficient-evidence outcome is not an error. `ingest --force-ocr PATH` overrides scan detection. `paperrag index` reconciles pending commits and maintains native indexes independently.
+### Enable research answers
 
-## Evidence and recovery
+Copy [`.env.example`](.env.example) to `.env` and fill in these five keys — the blanks below are reader-supplied configuration, not usable defaults:
 
-- Native extraction preserves text blocks and paragraph breaks but cannot guarantee faithful scientific table/formula reconstruction. Inspect original pages for evidence. Scanned pages use local Tesseract at 200 DPI; truly blank pages are counted, not embedded.
-- Every chunk stays on one physical PDF page, at most 384 tokenizer tokens with 64-token overlap. Character offsets slice the canonical normalized page text stored in `data/cache/`. Search is hybrid cosine + native BM25, reciprocal-rank reranked with overlap suppression and at most four chunks per paper. Nearest neighbors alone do not establish relevance.
-- `manifest.sqlite3` (WAL) journals successful revisions and failures; `lancedb/` holds authoritative chunks; `cache/` holds canonical pages and complete Arrow staging; `models/` holds downloaded tokenizer/CPU ONNX weights. Originals are never moved or changed. Back up the entire data directory with writers stopped.
-- Only one writer runs (`write.lock`); readers remain available. Parse/embed failures leave prior evidence intact. Whole-paper atomic merges delete only obsolete chunks belonging to that document. Installed LanceDB 0.40 uses the unqualified `document_id` column in the source-missing delete predicate; `target.document_id` is not accepted by that API. SQLite pending entries reconcile against committed Lance hashes/fingerprints on the next writer startup, closing the cross-database crash window without claiming a distributed transaction.
-- Unchanged bytes/settings skip work. A new path containing exact indexed bytes is reported as a duplicate without alias tracking. Changed indexed paths always replace their own revision. Missing originals do not prune evidence. Choose a new data directory to change embedding identity/schema; silent vector-space mixing is forbidden.
-- Native FTS/scalar indexes are maintained on ingestion and every 20 commits. Below 10,000 chunks, vector search is exact; at that threshold `IVF_PQ` uses cosine, 24 subvectors and bounded partitions. Maintenance errors are explicit; newly added rows are never excluded via fast-search shortcuts.
+```sh
+PAPERRAG_BASE_URL=
+PAPERRAG_API_KEY=
+PAPERRAG_BREAKDOWN_MODEL=
+PAPERRAG_RESEARCH_MODEL=
+PAPERRAG_SYNTHESIS_MODEL=
+```
 
-## Research contract
+One OpenAI-compatible Chat Completions endpoint serves all three roles, and the same model may serve each. Then run `ask`:
 
-The local index is stage 1. Stage 2 deconstructs excerpts; stage 3 plans at most four follow-up queries and performs one bounded expansion round against the same pinned table version and paper filter, then reports research; stage 4 drafts atomic claims and separately checks each against primary excerpts. Up to 16 whole chunks / 24,000 excerpt characters enter the evidence set. Source labels remain stable across the run.
+```sh
+micromamba run -n paperrag paperrag ask "What non-parametric memory does RAG use?" --json
+```
 
-Only `supported` claims with valid nonempty verbatim excerpt quotes and role `answer` are emitted as answer facts. The verifier separately assigns question-relative roles: `answer` directly responds to the question, `context` is background/nonresponsive information, and `insufficiency` says the requested answer is unavailable. Supported negative findings and direct answers to explicit excerpt-coverage questions can still be `answer`. Context, disclaimers, and contradicted/insufficient claims remain visible in fact checks, not as answer facts. If nothing qualifies, the result is `insufficient_evidence` with the exact insufficient-evidence message; hypotheses and limitations remain available separately. Nonempty evidence still runs all five model calls; empty retrieval runs none. Hypotheses are explicitly labeled as not established by the cited papers and paired with experiments. The checker evaluates support and relevance against retrieved excerpts, **not independent scientific truth**; model-based relevance judgments remain fallible. Untrusted paper text cannot execute tools or override reference validation. Missing/unknown roles, invalid references, malformed/truncated JSON and provider failures are explicit stage errors, never successful fabricated answers or automatic retries.
+Retrieved excerpts and their metadata are sent to the configured endpoint, and provider charges may apply.
 
-For gateways requiring a single system message, the app combines its JSON schema and safety instructions into one leading system message. This avoids ASU RC's `System message must be at the beginning` rejection without changing the selected endpoint or model.
+## Web interface
+
+1. **Add papers.** In **Library**, enter a PDF directory and click **Ingest directory**, then **Refresh library** to update counts.
+2. **Choose a scope.** Pick papers in **Library** or search the whole collection; in **Research**, choose **All indexed papers** or **Selected papers**.
+3. **Search or generate.** **Search excerpts** retrieves local evidence without credentials. **Research answer** runs the configured models: retrieved excerpts are sent to that endpoint.
+4. **Inspect the evidence.** Review the answer, hypotheses and limitations, and the fact-check table. Expand a source card and use **View page [S…]** to inspect the physical PDF page or download the original; source actions reuse the saved result, not new model calls.
+5. **Save your response.** With a completed **Research answer** on screen, **Save response** downloads the displayed answer, its structured analysis, fact checks, and exact indexed source excerpts as `paperrag-research-response.md`; no additional research call runs.
+
+Editing inputs, previewing, and downloading do not initiate new research. If an original file is changed or missing, its indexed excerpts remain available but the cited page cannot be previewed or downloaded until the PDF is re-ingested.
+
+## CLI guide
+
+All commands use the `micromamba run -n paperrag paperrag` prefix.
+
+| Command | Purpose |
+| --- | --- |
+| `download-samples` | Download the three official arXiv sample PDFs |
+| `ingest PATH…` | Recursively index PDFs without changing the originals |
+| `index` | Reconcile pending commits and maintain native FTS/scalar/ANN indexes |
+| `stats` | Show committed corpus counts and index readiness |
+| `search "QUESTION"` | Search local evidence without credentials or answer generation |
+| `ask "QUESTION"` | Run deconstruction, bounded research, synthesis, and independent verification |
+| `ui` | Launch the local single-user web app (default 127.0.0.1:8501) |
+
+```sh
+micromamba run -n paperrag paperrag stats --json
+micromamba run -n paperrag paperrag search "What non-parametric memory does RAG use?" --top-k 5
+micromamba run -n paperrag paperrag ask "How does context position affect grounded answers?" --document-id <document-id> --json
+micromamba run -n paperrag paperrag ingest --force-ocr /path/to/pdfs
+micromamba run -n paperrag paperrag index
+```
+
+`<document-id>` is a reader-supplied ID copied from `search --json` output or the Library. Repeated `--document-id` filters persist through research expansion. `--data-dir PATH` changes storage only, on `ingest`, `index`, `stats`, `search`, and `ask`. `stats`, `search`, and `ask` support `--json`: results go to stdout, progress and errors to stderr, failures exit nonzero, and a completed `insufficient_evidence` outcome is not an error.
+
+## How it works
+
+1. **Parse and chunk.** PyMuPDF native extraction with local Tesseract OCR fallback; originals are never modified. Chunks stay on one physical page, at most 384 tokenizer tokens with 64-token overlap, and canonical character offsets preserve traceability.
+2. **Index and retrieve.** CPU ONNX/FastEmbed embeddings feed embedded LanceDB hybrid search (cosine plus native BM25) with reciprocal-rank reranking — no vector server. Overlap suppression and per-paper diversity cap repeated passages.
+3. **Bound the evidence.** At most four follow-up queries run in one bounded expansion round, pinned to the same table version and paper scope. At most 16 whole chunks / 24,000 excerpt characters enter the evidence set, under stable source labels.
+4. **Verify the answer.** Atomic claims are checked in a separate call against their original cited excerpts — not research summaries. Only supported claims that also directly answer the question, with validated nonempty excerpt quotes, become answer facts; other checks remain inspectable. Hypotheses are labeled as not established by the cited papers and paired with suggested experiments.
+
+When nothing qualifies, the result is `insufficient_evidence`. The verification call is a model call, not an independent model or proof of scientific truth. Nonempty retrieval runs five model calls, empty retrieval runs none, and at most one corrective call repeats a check with mismatched claim-ID coverage; other provider or schema failures remain explicit errors. Research never discovers literature on the web; it stays within the indexed corpus.
+
+## Configuration
+
+See [`.env.example`](.env.example) and [`paperrag.example.toml`](paperrag.example.toml). Precedence: process environment &gt; `.env` &gt; TOML &gt; defaults. TOML paths are relative to the TOML file's directory; other relative paths use the working directory. Defaults: `data/` for storage, `papers/` for PDFs, and `BAAI/bge-small-en-v1.5` for embeddings.
+
+```toml
+data_dir = "./data"
+pdf_dir = "./papers"
+ocr_language = "eng"
+
+[models.synthesis.options]
+# Provider-specific output limit, e.g. max_completion_tokens = 4096.
+```
+
+Provider support determines the correct output-limit option. No endpoint or model is implicit; credentials belong in the environment or `.env`, never TOML, and reserved options cannot override model, messages, or credentials.
+
+## Data and recovery
+
+The data directory holds `manifest.sqlite3` (revision/failure journal), `lancedb/` (authoritative chunks and native indexes), `cache/` (canonical page text and staging), and `models/` (tokenizer/CPU ONNX weights). One writer runs at a time (`write.lock`) while readers stay available; whole-document replacement is staged and reconciled on the next writer startup or `paperrag index`, closing the crash window without claiming a distributed transaction. Unchanged bytes or settings skip work; an exact byte-for-byte copy at a new path is a duplicate without alias tracking; missing originals never prune evidence. Back up the entire data directory with writers stopped, keep the original PDFs separately, and use a fresh data directory when changing embedding identity or schema.
+
+## Limitations and troubleshooting
+
+- **Lossy extraction.** OCR, tables, and formulas can be imperfect; inspect the original pages for evidence. Nearest neighbors and an `ok` status are not scientific or relevance guarantees.
+- **OCR language data.** Tesseract resolves data from the running environment's `share/tessdata`; English (`eng`) is the default. Check with `micromamba run -n paperrag tesseract --list-langs`.
+- **Empty results.** Ingest PDFs first, then check the paper scope selected in the UI or `--document-id` filters.
+- **Provider errors.** Provider timeouts, schema, or truncation failures mean the endpoint cannot satisfy the request at the configured options; check endpoint/model capability and provider-specific limits. No vendor or model is recommended here.
+- **Privacy.** Parsing, OCR, embeddings, search, and previews stay local; hosted research exposes retrieved excerpts and metadata to that endpoint, and initial downloads require network. The web app binds to loopback and is single-user: authentication and multi-user serving are not provided.
 
 ## Development
 
 ```sh
+micromamba run -n paperrag python -m pip install -e '.[dev]'
 micromamba run -n paperrag python -m pytest -q
 ```
 
-Permanent tests use temporary generated PDFs, actual native Lance storage and deterministic tiny-vector/scripted-model fixtures. They do not download papers/models or call a hosted provider. Runtime never uses those fixtures.
-
-## Exercised verification
-
-The dedicated environment passed `pip check`; its console shebang points to its own Python and its Tesseract includes English data. Official samples were downloaded with recorded hashes/provenance, then indexed in 33.591 seconds including initial model downloads.
-
-| Indexed sample | Physical pages | Chunks |
-| --- | ---: | ---: |
-| Attention Is All You Need | 15 | 36 |
-| Retrieval-Augmented Generation | 19 | 61 |
-| Lost in the Middle | 18 | 60 |
-| Total | 52 | 157 |
-
-Fresh-process queries retrieved RAG's Wikipedia dense-vector-index/neural-retriever description on physical page 2 and Lost in the Middle's beginning/end-versus-middle finding on physical page 1. Every returned excerpt was checked against committed chunk IDs, canonical character offsets and physical page bounds. Unchanged ingest and a new-path duplicate preserved the complete chunk-ID set. Writer contention failed explicitly while readers remained usable.
-
-The offline suite passed 30 tests; the six retrieval tests passed again after their FTS-isolation and page-provenance fixtures were refined. A real image-only copy of Attention's first page exercised automatic scan detection, local OCR and retrieval with page-1 `ocr` provenance; the title and readable abstract text were compared visually with the original image.
-
-The synthetic ANN smoke used 10,048 rows derived from the real sample vectors, with seeded 1e-4 Gaussian perturbations to disambiguate repeated-vector ties. These are **not additional research papers**. Actual `paperrag index` built ready native FTS/scalar/IVF_PQ indexes (39 partitions), taking 2.28 seconds and 335,152 KiB peak child RSS measured through `getrusage` (`/usr/bin/time` was unavailable). Exact-ID mean recall@10 across ten fixed sample-derived questions was 0.41 with 20 probes/refinement 5, unchanged with all partitions/refinement 5, and 0.80 with all partitions/refinement 20. Individual tuned recalls were eight 1.0 and two 0.0; this deliberately clustered synthetic check does not establish real-corpus relevance or large-scale performance. Production retrieval now probes every partition (the build ceiling of 256 is clamped to the index's actual count) with refinement 20, trading speed for recall. The retained query parameters and actual hybrid path were exercised again.
-
-A real browser verified library counts after CLI ingestion without restarting the service, selected-paper retrieval, the exact RAG excerpt and rendered physical page 2, and explicit missing-configuration errors. Source actions use session-owned results. The browser tabs were closed.
-
-### Live ASU RC verification
-
-Using the configured ASU RC endpoint and `qwen35-397b-a17b` for all three stages, authenticated model listing and a bounded JSON completion succeeded. The initial full request exposed a multiple-system-message incompatibility, now fixed by combining application instructions into one leading system message. The offline suite still passed all 30 tests.
-
-With the original model options unchanged, the cross-paper research query timed out at the deconstruction stage's 180-second provider timeout (184.54 seconds total CLI time). A clinical dosing query completed all five model calls in 580.89 seconds and produced no treatment dose. However, it failed the expected abstention outcome: unrelated but excerpt-supported NLP claims survived verification, producing status `ok` instead of `insufficient_evidence`. The saved result is `data/verification/live-abstention.json` (runtime artifact, not committed).
-
-After restarting the browser service with the compatibility fix, a focused, RAG-paper-only question also reached deconstruction but timed out at the provider's 180-second limit. The browser displayed the named stage error. Sanitized outcomes are recorded in `data/verification/live-summary.json`; `.env` and its model options were not changed.
-
-The failed clinical acceptance check motivated the question-relevance gate described above. Quote support alone no longer makes a claim eligible for the factual answer: the verifier must also classify it as directly responsive. This is a model-based safeguard, not proof of universal answerability or relevance.
-
-### Question-relevance gate verification
-
-The updated offline suite passed all 40 tests, including supported-but-nonresponsive claims, mixed answer/context claims, responsive negative findings, excerpt-coverage questions, invalid quotes, strict role-schema failures, and Streamlit saved-result compatibility. A real browser also displayed the stale-answer clearing notice without resubmitting research.
-
-Live CLI checks used the unchanged configured models: `anthropic/claude-sonnet-4.6` for breakdown, `google/gemini-3.1-pro-preview` for research, and `openai/gpt-5.4` for synthesis.
-
-| Question | Status | CLI elapsed |
-| --- | --- | ---: |
-| What non-parametric memory does the RAG model use? | `ok` | 83.69 s |
-| What dose of amoxicillin should be prescribed to treat community-acquired pneumonia in a child? | `insufficient_evidence` | 82.36 s |
-
-Both runs completed all five model calls. The factual result emitted the Wikipedia dense-vector-index answer with a verbatim quote from the RAG paper's physical page 2; five supported background claims remained only in fact checks. The medical result emitted the exact insufficient-evidence message, excluded a supported context claim, and retained two separately stored hypotheses plus limitations. Full runtime results are saved in `data/verification/role-gate-factual.json` and `data/verification/role-gate-abstention.json`. These two successful scenarios do not establish universal relevance accuracy.
-
-## Using the web interface
-
-Start the app from the project directory:
-
-```sh
-micromamba run -n paperrag paperrag ui
-```
-
-Open <http://127.0.0.1:8501>, then:
-
-1. **Add papers:** In **Library**, enter a local PDF directory and click **Ingest directory**. Click **Refresh library** afterward to update counts and the paper list.
-2. **Choose a scope:** Select paper checkboxes in **Library**, or search the whole collection. In **Research**, enter your question and choose **All indexed papers** or **Selected papers**.
-3. **Search or generate:** **Search excerpts** retrieves local evidence without API credentials. **Research answer** runs the configured models and requires the endpoint, key, and three model IDs in `.env`; retrieved excerpts are sent to that endpoint.
-4. **Inspect the evidence:** Review the answer, separately labeled hypotheses, limitations, and fact-check table. Expand a source card and click **View page [S…]** to inspect the physical PDF page or download the original. Source actions reuse the saved result rather than repeating model calls.
-5. **Save your response:** With a completed **Research answer** on screen, click **Save response** to download the currently displayed answer, its structured analysis, fact checks, and exact indexed source excerpts as `paperrag-research-response.md`. The download is generated from the saved answer and performs no additional research call.
-
-If a source is missing or changed, its indexed excerpt remains available but the original page cannot be shown as the cited version; re-ingest the PDF to refresh it. Saved browser answers from before question-relevance checks are cleared with a notice, including their preview selection; submit the question again explicitly to generate a replacement. Search-only results and answers with no checks are unaffected. A result marked `ok` is not proof of relevance—check that the cited passages actually answer your question.
+Tests use generated PDFs, local Lance storage, and scripted-model fixtures; no hosted calls or downloads. [`environment.lock.yml`](environment.lock.yml) and [`requirements.lock.txt`](requirements.lock.txt) record the resolved Linux x86_64 environment; reproduce it with `micromamba create -y -f environment.lock.yml`, then `micromamba run -n paperrag python -m pip install --no-deps -e .`.
