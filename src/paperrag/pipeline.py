@@ -92,7 +92,7 @@ def validate_checks(draft: DraftAnswer, verification: Verification, sources: Seq
 
 
 def render(draft: DraftAnswer, checks: Sequence[ClaimCheck]) -> tuple[str, str]:
-    supported = {c.claim_id for c in checks if c.verdict == "supported"}
+    supported = {c.claim_id for c in checks if c.verdict == "supported" and c.role == "answer"}
     parts = []
     for section in draft.sections:
         claims = [claim for claim in section.claims if claim.claim_id in supported]
@@ -171,7 +171,15 @@ class Pipeline:
             # Deliberately exclude secondary research/breakdown summaries from the checker.
             claims = [{"claim": c.model_dump(), "quoted_sources": [e.model_dump() for e in sources if e.label in c.citations]}
                       for section in draft.sections for c in section.claims]
-            verification = call("synthesis", "Check every claim exactly once against ONLY its own original cited excerpts, not a summary. verdict is supported, contradicted or insufficient. Provide verbatim evidence_quotes pairs of citation and quote for support/contradiction. No cited evidence means insufficient.", Verification, {"claims": claims}, sources)
+            verification = call("synthesis",
+                                "Check every claim exactly once against ONLY its own original cited excerpts, not a summary. "
+                                "verdict is supported, contradicted or insufficient. Independently assign role relative to the original question: "
+                                "answer directly answers it; context is background or nonresponsive information; insufficiency says the requested factual answer is unavailable. "
+                                "True background facts and disclaimers about unavailable answers are not answer facts. "
+                                "A supported negative scientific finding, or a direct answer to an explicit question about excerpt coverage, can be answer. "
+                                "Judge responsiveness from the question and excerpts, not domain or negative keywords. "
+                                "Provide verbatim evidence_quotes pairs of citation and quote for support/contradiction. No cited evidence means insufficient.",
+                                Verification, {"claims": claims}, sources)
             checks = validate_checks(draft, verification, sources)
             status, markdown = render(draft, checks)
             emit("Complete", "Checked against retrieved paper excerpts")

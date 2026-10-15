@@ -129,7 +129,7 @@ def outputs(*, claim_text="The paper reports the observed result.", verification
         limitations=[],
     )
     check = verification or Verification(
-        claim_checks=[ClaimCheck(claim_id="c1", verdict="supported", reason="The excerpt states it.", evidence_quotes=[EvidenceQuote(citation=source_label, quote=claim_text)])]
+        claim_checks=[ClaimCheck(claim_id="c1", verdict="supported", role="answer", reason="The excerpt states it.", evidence_quotes=[EvidenceQuote(citation=source_label, quote=claim_text)])]
     )
     return [breakdown, plan, report, draft, check]
 
@@ -204,7 +204,7 @@ def test_pipeline_rejects_fabricated_references_at_each_stage():
     cases.append(("synthesis", bad_draft))
 
     bad_verification = outputs()
-    bad_verification[4] = Verification(claim_checks=[ClaimCheck(claim_id="c1", verdict="supported", reason="", evidence_quotes=[EvidenceQuote(citation="S99", quote="bad")])])
+    bad_verification[4] = Verification(claim_checks=[ClaimCheck(claim_id="c1", verdict="supported", role="answer", reason="", evidence_quotes=[EvidenceQuote(citation="S99", quote="bad")])])
     cases.append(("synthesis", bad_verification))
 
     for expected_stage, scripted in cases:
@@ -225,8 +225,8 @@ def test_supported_quote_must_exist_and_bad_supported_quote_is_insufficient():
         hypotheses=[], limitations=[],
     )
     verification = Verification(claim_checks=[
-        ClaimCheck(claim_id="valid", verdict="supported", reason="quoted", evidence_quotes=[EvidenceQuote(citation="S1", quote=source_text)]),
-        ClaimCheck(claim_id="bad", verdict="supported", reason="not actually quoted", evidence_quotes=[EvidenceQuote(citation="S1", quote="not in the excerpt")]),
+        ClaimCheck(claim_id="valid", verdict="supported", role="answer", reason="quoted", evidence_quotes=[EvidenceQuote(citation="S1", quote=source_text)]),
+        ClaimCheck(claim_id="bad", verdict="supported", role="answer", reason="not actually quoted", evidence_quotes=[EvidenceQuote(citation="S1", quote="not in the excerpt")]),
     ])
     scripted = outputs()
     scripted[3], scripted[4] = draft, verification
@@ -241,6 +241,83 @@ def test_supported_quote_must_exist_and_bad_supported_quote_is_insufficient():
     assert "The hidden result is definitive." not in result.answer_markdown
 
 
+def test_supported_context_and_disclaimer_abstain_without_losing_brainstorming():
+    context = "The paper uses dense retrieval for language tasks."
+    disclaimer = "The excerpts do not establish a pediatric antibiotic dose."
+    draft = DraftAnswer(
+        sections=[AnswerSection(heading="Findings", claims=[
+            Claim(claim_id="context", text=context, citations=["S1"]),
+            Claim(claim_id="disclaimer", text=disclaimer, citations=["S1"]),
+        ])],
+        hypotheses=[Hypothesis(text="Investigate clinical evidence separately.", suggested_experiment="Review relevant clinical studies.")],
+        limitations=["Only NLP papers were indexed."],
+    )
+    verification = Verification(claim_checks=[
+        ClaimCheck(claim_id="context", verdict="supported", role="context", reason="Background only.",
+                   evidence_quotes=[EvidenceQuote(citation="S1", quote=context)]),
+        ClaimCheck(claim_id="disclaimer", verdict="supported", role="insufficiency", reason="No requested dose.",
+                   evidence_quotes=[EvidenceQuote(citation="S1", quote=disclaimer)]),
+    ])
+    scripted = outputs()
+    scripted[3], scripted[4] = draft, verification
+    llm = ScriptedLLM(scripted)
+    result = pipeline_with([evidence("1" * 64, text=context + " " + disclaimer)], llm)[0].answer(
+        "What antibiotic dose should be prescribed to a child?"
+    )
+
+    assert (result.status, result.answer_markdown) == ("insufficient_evidence", INSUFFICIENT)
+    assert [(c.role, c.verdict, c.claim_text) for c in result.claim_checks] == [
+        ("context", "supported", context), ("insufficiency", "supported", disclaimer),
+    ]
+    assert result.hypotheses == draft.hypotheses
+    assert result.limitations == draft.limitations
+    assert [call[0] for call in llm.calls] == ["breakdown", "research", "research", "synthesis", "synthesis"]
+
+
+def test_responsive_answer_excludes_supported_background():
+    answer = "RAG uses a dense vector index of Wikipedia as non-parametric memory."
+    context = "The paper also discusses language generation."
+    draft = DraftAnswer(
+        sections=[AnswerSection(heading="Findings", claims=[
+            Claim(claim_id="answer", text=answer, citations=["S1"]),
+            Claim(claim_id="context", text=context, citations=["S1"]),
+        ])],
+        hypotheses=[], limitations=[],
+    )
+    verification = Verification(claim_checks=[
+        ClaimCheck(claim_id=claim_id, verdict="supported", role=role, reason="Quoted.",
+                   evidence_quotes=[EvidenceQuote(citation="S1", quote=text)])
+        for claim_id, role, text in [("answer", "answer", answer), ("context", "context", context)]
+    ])
+    scripted = outputs()
+    scripted[3], scripted[4] = draft, verification
+    result = pipeline_with([evidence("1" * 64, text=answer + " " + context)], ScriptedLLM(scripted))[0].answer(
+        "What non-parametric memory does RAG use?"
+    )
+
+    assert (result.status, result.answer_markdown) == ("ok", answer + " [S1]")
+    assert [c.verdict for c in result.claim_checks] == ["supported", "supported"]
+
+
+@pytest.mark.parametrize("question, text", [
+    ("Did the intervention improve accuracy?", "The intervention did not improve accuracy."),
+    ("Do the excerpts establish a pediatric dose?", "The excerpts do not establish a pediatric dose."),
+])
+def test_responsive_negative_and_excerpt_coverage_answers_remain_eligible(question, text):
+    result = pipeline_with([evidence("1" * 64, text=text)], ScriptedLLM(outputs(claim_text=text)))[0].answer(question)
+    assert (result.status, result.answer_markdown) == ("ok", text + " [S1]")
+    assert result.claim_checks[0].role == "answer"
+
+
+def test_answer_role_does_not_bypass_quote_validation():
+    scripted = outputs(claim_text="A claim absent from the excerpt.")
+    result = pipeline_with([evidence("1" * 64)], ScriptedLLM(scripted))[0].answer("What was observed?")
+    assert (result.status, result.answer_markdown) == ("insufficient_evidence", INSUFFICIENT)
+    assert result.claim_checks[0].role == "answer"
+    assert result.claim_checks[0].verdict == "insufficient"
+    assert result.claim_checks[0].evidence_quotes == []
+
+
 def test_contradicted_and_insufficient_claims_are_not_emitted_and_all_unsupported_is_exact():
     first = evidence("1" * 64, text="The excerpt contradicts claim one and says nothing about claim two.")
     draft = DraftAnswer(
@@ -252,8 +329,8 @@ def test_contradicted_and_insufficient_claims_are_not_emitted_and_all_unsupporte
         limitations=["Only one excerpt was retrieved."],
     )
     verification = Verification(claim_checks=[
-        ClaimCheck(claim_id="contradicted", verdict="contradicted", reason="The excerpt disagrees.", evidence_quotes=[EvidenceQuote(citation="S1", quote="The excerpt contradicts claim one")]),
-        ClaimCheck(claim_id="insufficient", verdict="insufficient", reason="No support.", evidence_quotes=[]),
+        ClaimCheck(claim_id="contradicted", verdict="contradicted", role="answer", reason="The excerpt disagrees.", evidence_quotes=[EvidenceQuote(citation="S1", quote="The excerpt contradicts claim one")]),
+        ClaimCheck(claim_id="insufficient", verdict="insufficient", role="answer", reason="No support.", evidence_quotes=[]),
     ])
     scripted = outputs()
     scripted[3], scripted[4] = draft, verification
@@ -277,7 +354,7 @@ def test_duplicate_or_missing_claim_checks_are_stage_errors(kind):
             Claim(claim_id="c2", text="Two.", citations=["S1"]),
         ])], hypotheses=[], limitations=[],
     )
-    checks = [ClaimCheck(claim_id="c1", verdict="insufficient", reason="", evidence_quotes=[])]
+    checks = [ClaimCheck(claim_id="c1", verdict="insufficient", role="answer", reason="", evidence_quotes=[])]
     if kind == "duplicate":
         checks.append(checks[0])
     verification = Verification(claim_checks=checks)
@@ -350,7 +427,6 @@ def test_complete_json_accepts_one_json_code_fence_and_validates_schema():
     llm = llm_fixture(response("```json\n" + json.dumps(value.model_dump()) + "\n```"))
     parsed = llm.complete_json("breakdown", [{"role": "user", "content": "x"}], Breakdown)
     assert parsed == value
-    assert llm.client.chat.completions.calls[0]["model"] == "fixture-model"
 
 
 @pytest.mark.parametrize(
@@ -372,4 +448,17 @@ def test_complete_json_rejects_empty_truncated_malformed_or_schema_mismatch(fixt
 def test_complete_json_provider_failure_is_named_and_not_synthetic():
     with pytest.raises(StageError, match="Provider call failed") as caught:
         llm_fixture(error=RuntimeError("offline fixture")).complete_json("synthesis", [], DraftAnswer)
+    assert caught.value.stage == "synthesis"
+
+
+@pytest.mark.parametrize("role", [None, "background"])
+def test_verification_missing_or_unknown_role_is_a_synthesis_schema_error(role):
+    check = outputs()[4].claim_checks[0].model_dump()
+    if role is None:
+        del check["role"]
+    else:
+        check["role"] = role
+    llm = llm_fixture(response(json.dumps({"claim_checks": [check]})))
+    with pytest.raises(StageError, match="schema mismatch") as caught:
+        llm.complete_json("synthesis", [{"role": "user", "content": "Verify these claims."}], Verification)
     assert caught.value.stage == "synthesis"

@@ -53,7 +53,7 @@ Open <http://127.0.0.1:8501>. Library recursively indexes local directories, pag
 
 The local index is stage 1. Stage 2 deconstructs excerpts; stage 3 plans at most four follow-up queries and performs one bounded expansion round against the same pinned table version and paper filter, then reports research; stage 4 drafts atomic claims and separately checks each against primary excerpts. Up to 16 whole chunks / 24,000 excerpt characters enter the evidence set. Source labels remain stable across the run.
 
-Only `supported` claims with valid nonempty verbatim excerpt quotes are emitted as answer facts. Contradicted/insufficient claims remain visible in fact checks, not the answer. Hypotheses are explicitly labeled as not established by the cited papers and paired with experiments. The checker evaluates support against retrieved excerpts, **not independent scientific truth**. Untrusted paper text cannot execute tools or override reference validation. Invalid references, malformed/truncated JSON and provider failures are explicit stage errors, never successful fabricated answers or automatic retries.
+Only `supported` claims with valid nonempty verbatim excerpt quotes and role `answer` are emitted as answer facts. The verifier separately assigns question-relative roles: `answer` directly responds to the question, `context` is background/nonresponsive information, and `insufficiency` says the requested answer is unavailable. Supported negative findings and direct answers to explicit excerpt-coverage questions can still be `answer`. Context, disclaimers, and contradicted/insufficient claims remain visible in fact checks, not as answer facts. If nothing qualifies, the result is `insufficient_evidence` with the exact insufficient-evidence message; hypotheses and limitations remain available separately. Nonempty evidence still runs all five model calls; empty retrieval runs none. Hypotheses are explicitly labeled as not established by the cited papers and paired with experiments. The checker evaluates support and relevance against retrieved excerpts, **not independent scientific truth**; model-based relevance judgments remain fallible. Untrusted paper text cannot execute tools or override reference validation. Missing/unknown roles, invalid references, malformed/truncated JSON and provider failures are explicit stage errors, never successful fabricated answers or automatic retries.
 
 For gateways requiring a single system message, the app combines its JSON schema and safety instructions into one leading system message. This avoids ASU RC's `System message must be at the beginning` rejection without changing the selected endpoint or model.
 
@@ -92,7 +92,20 @@ With the original model options unchanged, the cross-paper research query timed 
 
 After restarting the browser service with the compatibility fix, a focused, RAG-paper-only question also reached deconstruction but timed out at the provider's 180-second limit. The browser displayed the named stage error. Sanitized outcomes are recorded in `data/verification/live-summary.json`; `.env` and its model options were not changed.
 
-**Known limitation:** quote-supported claims are not necessarily relevant answers to the question. The current checker does not enforce question relevance. Successful provider execution is therefore not proof that out-of-corpus queries abstain correctly. This remains a failed live acceptance criterion, not an end-to-end success claim.
+The failed clinical acceptance check motivated the question-relevance gate described above. Quote support alone no longer makes a claim eligible for the factual answer: the verifier must also classify it as directly responsive. This is a model-based safeguard, not proof of universal answerability or relevance.
+
+### Question-relevance gate verification
+
+The updated offline suite passed all 40 tests, including supported-but-nonresponsive claims, mixed answer/context claims, responsive negative findings, excerpt-coverage questions, invalid quotes, strict role-schema failures, and Streamlit saved-result compatibility. A real browser also displayed the stale-answer clearing notice without resubmitting research.
+
+Live CLI checks used the unchanged configured models: `anthropic/claude-sonnet-4.6` for breakdown, `google/gemini-3.1-pro-preview` for research, and `openai/gpt-5.4` for synthesis.
+
+| Question | Status | CLI elapsed |
+| --- | --- | ---: |
+| What non-parametric memory does the RAG model use? | `ok` | 83.69 s |
+| What dose of amoxicillin should be prescribed to treat community-acquired pneumonia in a child? | `insufficient_evidence` | 82.36 s |
+
+Both runs completed all five model calls. The factual result emitted the Wikipedia dense-vector-index answer with a verbatim quote from the RAG paper's physical page 2; five supported background claims remained only in fact checks. The medical result emitted the exact insufficient-evidence message, excluded a supported context claim, and retained two separately stored hypotheses plus limitations. Full runtime results are saved in `data/verification/role-gate-factual.json` and `data/verification/role-gate-abstention.json`. These two successful scenarios do not establish universal relevance accuracy.
 
 ## Using the web interface
 
@@ -109,4 +122,4 @@ Open <http://127.0.0.1:8501>, then:
 3. **Search or generate:** **Search excerpts** retrieves local evidence without API credentials. **Research answer** runs the configured models and requires the endpoint, key, and three model IDs in `.env`; retrieved excerpts are sent to that endpoint.
 4. **Inspect the evidence:** Review the answer, separately labeled hypotheses, limitations, and fact-check table. Expand a source card and click **View page [S…]** to inspect the physical PDF page or download the original. Source actions reuse the saved result rather than repeating model calls.
 
-If a source is missing or changed, its indexed excerpt remains available but the original page cannot be shown as the cited version; re-ingest the PDF to refresh it. A result marked `ok` is not proof of relevance—check that the cited passages actually answer your question.
+If a source is missing or changed, its indexed excerpt remains available but the original page cannot be shown as the cited version; re-ingest the PDF to refresh it. Saved browser answers from before question-relevance checks are cleared with a notice, including their preview selection; submit the question again explicitly to generate a replacement. Search-only results and answers with no checks are unaffected. A result marked `ok` is not proof of relevance—check that the cited passages actually answer your question.

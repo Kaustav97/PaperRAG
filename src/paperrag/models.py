@@ -120,6 +120,7 @@ class EvidenceQuote(Contract):
 class ClaimCheck(Contract):
     claim_id: str
     verdict: Literal["supported", "contradicted", "insufficient"]
+    role: Literal["answer", "context", "insufficiency"]
     reason: str
     evidence_quotes: list[EvidenceQuote]
     claim_text: str = ""

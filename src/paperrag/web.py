@@ -137,6 +137,11 @@ with research_tab:
     if st.session_state.get("query_error"):
         st.error(st.session_state["query_error"])
     saved = st.session_state.get("query_result")
+    if saved and saved["kind"] == "answer" and any("role" not in check for check in saved["value"].get("claim_checks", [])):
+        st.session_state.pop("query_result", None)
+        st.session_state.pop("preview_chunk", None)
+        saved = None
+        st.info("Previous answer cleared because it lacks question-relevance checks. Submit the question again.")
     if saved and saved["kind"] == "answer":
         result = AnswerResult.model_validate(saved["value"])
         st.caption("Result question: " + result.question)
