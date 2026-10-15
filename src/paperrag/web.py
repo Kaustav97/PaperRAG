@@ -7,6 +7,7 @@ from paperrag.config import load_settings
 from paperrag.ingest import Ingestor
 from paperrag.models import AnswerResult, Evidence
 from paperrag.pipeline import Pipeline
+from paperrag.response_export import render_response_markdown
 from paperrag.retrieval import RetrievalSession
 from paperrag.sources import render_page, source_path
 from paperrag.storage import Store
@@ -105,11 +106,12 @@ with research_tab:
     except ValueError as exc:
         configured = False
         st.warning(str(exc))
-    with st.form("research-query"):
-        question = st.text_area("Research question", placeholder="What non-parametric memory does the RAG model use?")
-        scope = st.radio("Corpus scope", ["All indexed papers", "Selected papers"], horizontal=True)
-        search_clicked = st.form_submit_button("Search excerpts")
-        answer_clicked = st.form_submit_button("Research answer")
+    question = st.text_area("Research question", placeholder="What non-parametric memory does the RAG model use?", key="research-question")
+    scope = st.radio("Corpus scope", ["All indexed papers", "Selected papers"], horizontal=True, key="research-scope")
+    action_row = st.columns(3)
+    search_clicked = action_row[0].button("Search excerpts", key="research-search")
+    answer_clicked = action_row[1].button("Research answer", key="research-answer")
+    save_action = action_row[2]
     if search_clicked or answer_clicked:
         try:
             ids = st.session_state["selected_documents"] if scope == "Selected papers" else None
@@ -144,6 +146,13 @@ with research_tab:
         st.info("Previous answer cleared because it lacks question-relevance checks. Submit the question again.")
     if saved and saved["kind"] == "answer":
         result = AnswerResult.model_validate(saved["value"])
+        save_action.download_button(
+            "Save response",
+            data=render_response_markdown(result),
+            file_name="paperrag-research-response.md",
+            mime="text/markdown",
+            key="save-response",
+        )
         st.caption("Result question: " + result.question)
         st.markdown(result.answer_markdown)
         st.caption("Checked against retrieved paper excerpts — evidence support, not independent scientific truth.")

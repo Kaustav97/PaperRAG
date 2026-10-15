@@ -51,6 +51,7 @@ def test_legacy_answer_is_cleared_without_paid_rerun(app):
     assert any(info.value == "Previous answer cleared because it lacks question-relevance checks. Submit the question again."
                for info in app.info)
     assert "An old answer." not in [item.value for item in app.markdown]
+    assert len(app.download_button) == 0
     assert calls == []
 
 
@@ -75,4 +76,51 @@ def test_empty_check_answers_and_search_results_are_preserved(app, kind):
         assert INSUFFICIENT in [item.value for item in app.markdown]
     else:
         assert any("Retrieval only" in item.value for item in app.caption)
+    assert calls == []
+
+
+def saved_answer() -> dict:
+    return {"kind": "answer", "value": AnswerResult(
+        status="ok", question="A question", answer_markdown="A complete answer.",
+        claim_checks=[ClaimCheck(claim_id="c1", verdict="supported", role="answer",
+                                 reason="Reasonable", evidence_quotes=[])],
+    ).model_dump()}
+
+
+def test_saved_answer_offers_save_response_download(app):
+    app, calls = app
+    app.session_state["query_result"] = saved_answer()
+    app.run()
+
+    assert not app.exception
+    assert len(app.download_button) == 1
+    assert app.download_button[0].proto.label == "Save response"
+    assert "A complete answer." in [item.value for item in app.markdown]
+    assert calls == []
+
+
+def test_save_response_click_reruns_without_modifying_state_or_calling(app):
+    app, calls = app
+    saved = saved_answer()
+    app.session_state["query_result"] = saved
+    app.session_state["preview_chunk"] = "existing-preview"
+    app.run()
+    assert len(app.download_button) == 1
+
+    app.download_button[0].click().run()
+
+    assert not app.exception
+    assert app.session_state["query_result"] == saved
+    assert app.session_state["preview_chunk"] == "existing-preview"
+    assert len(app.download_button) == 1
+    assert calls == []
+
+
+def test_search_only_result_has_no_save_response(app):
+    app, calls = app
+    app.session_state["query_result"] = {"kind": "search", "question": "A local search", "sources": []}
+    app.run()
+
+    assert not app.exception
+    assert len(app.download_button) == 0
     assert calls == []

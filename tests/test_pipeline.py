@@ -346,7 +346,7 @@ def test_contradicted_and_insufficient_claims_are_not_emitted_and_all_unsupporte
 
 
 @pytest.mark.parametrize("kind", ["duplicate", "missing"])
-def test_duplicate_or_missing_claim_checks_are_stage_errors(kind):
+def test_duplicate_or_missing_claim_checks_fail_after_corrective_retry(kind):
     first = evidence("1" * 64)
     draft = DraftAnswer(
         sections=[AnswerSection(heading="", claims=[
@@ -360,10 +360,37 @@ def test_duplicate_or_missing_claim_checks_are_stage_errors(kind):
     verification = Verification(claim_checks=checks)
     scripted = outputs()
     scripted[3], scripted[4] = draft, verification
+    # The single corrective retry also receives the same inconsistent output, so the
+    # invariant still hard-fails instead of silently accepting a partial check set.
+    scripted.append(verification)
 
     with pytest.raises(StageError, match="Claim checks must cover") as caught:
         pipeline_with([first], ScriptedLLM(scripted))[0].answer("question")
     assert caught.value.stage == "synthesis verification"
+
+
+def test_checker_id_mismatch_recovers_on_corrective_retry():
+    first = evidence("1" * 64)
+    draft = DraftAnswer(
+        sections=[AnswerSection(heading="", claims=[
+            Claim(claim_id="c1", text="One.", citations=["S1"]),
+            Claim(claim_id="c2", text="Two.", citations=["S1"]),
+        ])], hypotheses=[], limitations=[],
+    )
+    bad = Verification(claim_checks=[ClaimCheck(claim_id="c1", verdict="insufficient", role="answer", reason="", evidence_quotes=[])])
+    good = Verification(claim_checks=[
+        ClaimCheck(claim_id="c1", verdict="insufficient", role="answer", reason="", evidence_quotes=[]),
+        ClaimCheck(claim_id="c2", verdict="insufficient", role="answer", reason="", evidence_quotes=[]),
+    ])
+    scripted = outputs()
+    scripted[3], scripted[4] = draft, bad
+    scripted.append(good)
+
+    result = pipeline_with([first], ScriptedLLM(scripted))[0].answer("question")
+
+    assert result.status == "insufficient_evidence"
+    assert result.answer_markdown == INSUFFICIENT
+    assert [c.claim_id for c in result.claim_checks] == ["c1", "c2"]
 
 
 def test_provider_stage_failure_is_not_insufficient_evidence():

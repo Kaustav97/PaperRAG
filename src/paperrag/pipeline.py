@@ -171,16 +171,34 @@ class Pipeline:
             # Deliberately exclude secondary research/breakdown summaries from the checker.
             claims = [{"claim": c.model_dump(), "quoted_sources": [e.model_dump() for e in sources if e.label in c.citations]}
                       for section in draft.sections for c in section.claims]
-            verification = call("synthesis",
-                                "Check every claim exactly once against ONLY its own original cited excerpts, not a summary. "
-                                "verdict is supported, contradicted or insufficient. Independently assign role relative to the original question: "
-                                "answer directly answers it; context is background or nonresponsive information; insufficiency says the requested factual answer is unavailable. "
-                                "True background facts and disclaimers about unavailable answers are not answer facts. "
-                                "A supported negative scientific finding, or a direct answer to an explicit question about excerpt coverage, can be answer. "
-                                "Judge responsiveness from the question and excerpts, not domain or negative keywords. "
-                                "Provide verbatim evidence_quotes pairs of citation and quote for support/contradiction. No cited evidence means insufficient.",
-                                Verification, {"claims": claims}, sources)
-            checks = validate_checks(draft, verification, sources)
+            check_instruction = ("Check every claim exactly once against ONLY its own original cited excerpts, not a summary. "
+                                 "verdict is supported, contradicted or insufficient. Independently assign role relative to the original question: "
+                                 "answer directly answers it; context is background or nonresponsive information; insufficiency says the requested factual answer is unavailable. "
+                                 "True background facts and disclaimers about unavailable answers are not answer facts. "
+                                 "A supported negative scientific finding, or a direct answer to an explicit question about excerpt coverage, can be answer. "
+                                 "Judge responsiveness from the question and excerpts, not domain or negative keywords. "
+                                 "Provide verbatim evidence_quotes pairs of citation and quote for support/contradiction. No cited evidence means insufficient.")
+            verification = call("synthesis", check_instruction, Verification, {"claims": claims}, sources)
+            checks = None
+            for attempt in (1, 2):
+                try:
+                    checks = validate_checks(draft, verification, sources)
+                    break
+                except StageError as exc:
+                    # Keep the invariant: every draft claim must be checked exactly once. A checker
+                    # that mangles its claim-id set gets one corrective retry with the exact ids, so
+                    # a mechanical model error does not discard the whole paid run.
+                    if exc.stage != "synthesis verification" or "Claim checks must cover" not in str(exc):
+                        raise
+                    if attempt == 2:
+                        raise
+                    ids = sorted({c.claim_id for section in draft.sections for c in section.claims})
+                    emit("4. Synthesis — verification", "Checker did not cover every draft claim exactly once; retrying the check once.")
+                    verification = call("synthesis",
+                                        check_instruction + " Your previous response did not check every draft claim exactly once. "
+                                        "Return exactly one check per draft claim id with no missing, extra, duplicated or renumbered ids; the required ids are "
+                                        + json.dumps(ids) + ".",
+                                        Verification, {"claims": claims}, sources)
             status, markdown = render(draft, checks)
             emit("Complete", "Checked against retrieved paper excerpts")
             return AnswerResult(status=status, question=question, answer_markdown=markdown, breakdown=breakdown,
