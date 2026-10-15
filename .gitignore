@@ -1,0 +1,9 @@
+.env
+paperrag.toml
+data/
+papers/
+.cache/
+.pytest_cache/
+__pycache__/
+*.egg-info/
+*.pyc

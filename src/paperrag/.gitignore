@@ -1,0 +1,5 @@
+# GITIGNORE
+.env*
+.pytest_cache/
+.pyproject.toml
+

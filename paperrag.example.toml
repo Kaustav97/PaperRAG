@@ -1,0 +1,20 @@
+# Copy to paperrag.toml. Paths are relative to this file.
+data_dir = "./data"
+pdf_dir = "./papers"
+embedding_model = "BAAI/bge-small-en-v1.5"
+embed_batch_size = 16
+threads = 2
+ocr_language = "eng"
+# One OpenAI-compatible Chat Completions endpoint; no default provider/model.
+# Excerpts sent to a hosted endpoint leave your machine. Secrets belong in .env.
+base_url = ""
+[models.breakdown]
+model = ""
+[models.breakdown.options]
+# Provider-specific arguments, e.g. max_completion_tokens = 4096.
+[models.research]
+model = ""
+[models.research.options]
+[models.synthesis]
+model = ""
+[models.synthesis.options]

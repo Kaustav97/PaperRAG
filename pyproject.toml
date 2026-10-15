@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paperrag"
+version = "0.1.0"
+description = "Local, page-grounded research over PDFs"
+requires-python = ">=3.11"
+dependencies = ["pymupdf", "fastembed", "tokenizers>=0.22,<0.23", "lancedb", "pyarrow", "numpy", "openai", "pydantic", "pydantic-settings", "python-dotenv", "typer", "rich", "streamlit", "httpx", "filelock"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+paperrag = "paperrag.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.data-files]
+"share/paperrag" = ["examples/papers.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
