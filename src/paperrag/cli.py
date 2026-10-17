@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import functools
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -124,10 +123,11 @@ def ask(question: str, data_dir: DataDir = None, document_id: DocIds = None,
 @app.command()
 @guarded
 def ui(host: str = "127.0.0.1", port: int = 8501):
-    """Launch the local single-user browser app with this environment's Python."""
-    settings = load_settings()
-    env = {**os.environ, "PAPERRAG_DATA_DIR": str(settings.data_dir)}
+    """Launch the browser app from the checkout, using this environment's Python."""
+    project_dir = Path(__file__).resolve().parents[2]
+    # Editable installs keep configuration and relative paths anchored to the checkout.
+    working_dir = project_dir if (project_dir / "pyproject.toml").is_file() else Path.cwd()
     result = subprocess.run([sys.executable, "-m", "streamlit", "run", str(Path(__file__).with_name("web.py")),
                              "--server.address", host, "--server.port", str(port),
-                             "--server.headless", "true", "--browser.gatherUsageStats", "false"], env=env)
+                             "--server.headless", "true", "--browser.gatherUsageStats", "false"], cwd=working_dir)
     raise typer.Exit(result.returncode)

@@ -44,6 +44,8 @@ Retrieved excerpts and their metadata are sent to the configured endpoint, and p
 
 ## Web interface
 
+With the editable install above, `paperrag ui` can run from any directory: it uses the checkout's `.env` and `paperrag.toml`, and resolves relative paths (including the default `data/` and `papers/`) from the checkout root. Exported environment variables still override `.env`; files in the launch directory are not used. Non-editable installs use the launch directory.
+
 1. **Add papers.** In **Library**, enter a PDF directory and click **Ingest directory**, then **Refresh library** to update counts.
 2. **Choose a scope.** Pick papers in **Library** or search the whole collection; in **Research**, choose **All indexed papers** or **Selected papers**.
 3. **Search or generate.** **Search excerpts** retrieves local evidence without credentials. **Research answer** runs the configured models: retrieved excerpts are sent to that endpoint.
@@ -99,6 +101,8 @@ ocr_language = "eng"
 ```
 
 Provider support determines the correct output-limit option. No endpoint or model is implicit; credentials belong in the environment or `.env`, never TOML, and reserved options cannot override model, messages, or credentials.
+
+For the current cost-conscious OpenRouter test configuration, see [OPENROUTER_STAGE_MODELS.md](OPENROUTER_STAGE_MODELS.md). [PAPERRAG_SESSION_HANDOFF.md](PAPERRAG_SESSION_HANDOFF.md) records implementation state and safeguards for future agents. Neither file contains credentials.
 
 ## Data and recovery
 
