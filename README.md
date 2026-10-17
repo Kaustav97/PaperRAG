@@ -54,6 +54,22 @@ The **Local PDF directory** field selects an existing folder. Enter or blur swit
 4. **Inspect the evidence.** Review the answer, hypotheses and limitations, and the fact-check table. Expand a source card and use **View page [S…]** to inspect the physical PDF page or download the original; source actions reuse the saved result, not new model calls.
 5. **Save your response.** With a completed **Research answer** on screen, **Save response** downloads the displayed answer, its structured analysis, fact checks, and exact indexed source excerpts as `paperrag-research-response.md`; no additional research call runs.
 
+In **Research → Model settings**, configure **Model ID** and **Request options (JSON)** separately for Breakdown, Research, and Synthesis. Values start from configuration; edits are session-only and persist across library switches. All three stage configurations are applied together after validation. Invalid JSON, non-object options, or reserved overrides block **Research answer**, but local search and saved-response downloads remain available. Editing settings does not call a provider or change a saved answer. Endpoint and credentials still come from configuration; never paste credentials into request options.
+
+For a Fusion-style request, set the desired stage's **Model ID** to `openrouter/fusion` and its options to:
+
+```json
+{
+  "extra_body": {
+    "plugins": [
+      {"id": "fusion", "preset": "general-budget"}
+    ]
+  }
+}
+```
+
+Standard Chat Completions options such as `temperature` or `max_completion_tokens` go alongside `extra_body`. The OpenAI client places fields inside `extra_body` at the top level of the outgoing JSON body. The app still supplies messages and requires structured JSON responses. Model IDs, plugin IDs/presets, and output-limit options must be supported by your endpoint; this example does not guarantee provider compatibility. Failures remain visible without silent fallback or retries.
+
 Editing inputs, previewing, and downloading do not initiate new research. If an original file is changed or missing, its indexed excerpts remain available but the cited page cannot be previewed or downloaded. Re-ingest changed PDFs to update their indexed evidence.
 
 PDF source paths remain absolute. Moving a library or its PDFs does not make previews portable; unchanged bytes at a new path may be skipped as a duplicate. Restore the original path or build a fresh index to restore previews.
@@ -105,6 +121,18 @@ ocr_language = "eng"
 ```
 
 Provider support determines the correct output-limit option. No endpoint or model is implicit; credentials belong in the environment or `.env`, never TOML, and reserved options cannot override model, messages, or credentials.
+
+The equivalent persistent Fusion-style stage configuration is:
+
+```toml
+[models.research]
+model = "openrouter/fusion"
+
+[models.research.options.extra_body]
+plugins = [{ id = "fusion", preset = "general-budget" }]
+```
+
+Use only on an endpoint that supports that model and plugin; environment model overrides still take precedence over TOML, and session UI edits take precedence for UI research only.
 
 For the current cost-conscious OpenRouter test configuration, see [OPENROUTER_STAGE_MODELS.md](OPENROUTER_STAGE_MODELS.md). [PAPERRAG_SESSION_HANDOFF.md](PAPERRAG_SESSION_HANDOFF.md) records implementation state and safeguards for future agents. Neither file contains credentials.
 

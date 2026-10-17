@@ -15,6 +15,12 @@ model = ""
 [models.research]
 model = ""
 [models.research.options]
+# Provider extensions go in extra_body, not as SDK keyword arguments.
+# For a compatible Fusion endpoint, set models.research.model to "openrouter/fusion"
+# and uncomment the following table (model/preset availability is endpoint-specific):
+# [models.research.options.extra_body]
+# plugins = [{ id = "fusion", preset = "general-budget" }]
+# UI Research > Model settings can override each stage for the current session.
 [models.synthesis]
 model = ""
 [models.synthesis.options]

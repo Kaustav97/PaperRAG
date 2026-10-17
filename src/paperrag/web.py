@@ -1,9 +1,10 @@
 """Streamlit surface over the same services as CLI. Paid calls occur only on submit."""
+import json
 from pathlib import Path
 
 import streamlit as st
 
-from paperrag.config import load_settings
+from paperrag.config import Models, StageModel, load_settings
 from paperrag.ingest import Ingestor
 from paperrag.models import AnswerResult, Evidence
 from paperrag.pipeline import Pipeline
@@ -134,6 +135,31 @@ with library:
 with research_tab:
     st.subheader("Research over indexed evidence")
     st.caption("1. Local index → 2. Deconstruction → 3. Bounded research → 4. Synthesis + independent excerpt verification")
+    model_errors = []
+    stage_models = {}
+    with st.expander("Model settings"):
+        st.caption("Per-stage overrides last for this session, including across library switches. "
+                   "Options are JSON Chat Completions arguments; put provider extensions such as plugins "
+                   "inside extra_body. Editing does not call models or change saved answers.")
+        for stage in ("breakdown", "research", "synthesis"):
+            st.subheader(stage.title())
+            current = getattr(settings.models, stage)
+            model = st.text_input("Model ID", value=current.model or "", key=f"model-{stage}")
+            options_text = st.text_area(
+                "Request options (JSON)", value=json.dumps(current.options, indent=2),
+                key=f"model-options-{stage}", height=180,
+            )
+            try:
+                options = json.loads(options_text)
+                if not isinstance(options, dict):
+                    raise ValueError("Request options must be a JSON object.")
+                stage_models[stage] = StageModel(model=model, options=options)
+            except ValueError as exc:
+                model_errors.append(f"{stage.title()} model settings: {exc}")
+        for error in model_errors:
+            st.error(error)
+    if not model_errors:
+        settings = settings.model_copy(update={"models": Models(**stage_models)})
     try:
         settings.require_llm()
         configured = True
@@ -144,7 +170,7 @@ with research_tab:
     scope = st.radio("Corpus scope", ["All indexed papers", "Selected papers"], horizontal=True, key="research-scope")
     action_row = st.columns(3)
     search_clicked = action_row[0].button("Search excerpts", key="research-search")
-    answer_clicked = action_row[1].button("Research answer", key="research-answer")
+    answer_clicked = action_row[1].button("Research answer", key="research-answer", disabled=bool(model_errors) or not configured)
     save_action = action_row[2]
     if search_clicked or answer_clicked:
         try:

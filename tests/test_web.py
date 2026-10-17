@@ -1,4 +1,5 @@
 """Exercise saved-answer compatibility through the actual Streamlit surface."""
+import json
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ from streamlit.testing.v1 import AppTest
 
 from paperrag import config
 from paperrag.config import Settings
+from pydantic import SecretStr
 from paperrag.llm import LLM
 from paperrag.models import AnswerResult, ClaimCheck
 from paperrag.pipeline import INSUFFICIENT, Pipeline
@@ -261,3 +263,77 @@ def test_invalid_folder_stops_before_stale_results_or_fallback(app, tmp_path, in
     assert app.metric[0].value == "0"
     if invalid != "storage":
         assert app.session_state["query_result"] == saved_answer()
+
+
+def test_model_controls_use_configuration_and_survive_library_switch(app, tmp_path, monkeypatch):
+    app, calls = app
+    settings = Settings(
+        pdf_dir=tmp_path / "papers", base_url="http://127.0.0.1:9/v1",
+        api_key=SecretStr("local-test-key"),
+        models=config.Models(**{
+            stage: config.StageModel(model=f"configured-{stage}", options={"temperature": 0.2})
+            for stage in ("breakdown", "research", "synthesis")
+        }),
+    )
+    monkeypatch.setattr(config, "load_settings", lambda: settings)
+    # Start a fresh session so widget defaults come from configuration.
+    app = AppTest.from_file(str(APP), default_timeout=15).run()
+    for stage in ("breakdown", "research", "synthesis"):
+        assert app.text_input(key=f"model-{stage}").value == f"configured-{stage}"
+        assert json.loads(app.text_area(key=f"model-options-{stage}").value) == {"temperature": 0.2}
+    saved = saved_answer()
+    app.session_state["query_result"] = saved
+    options = {"extra_body": {"plugins": [{"id": "fusion", "preset": "general-budget"}]}}
+    app.text_input(key="model-research").set_value("openrouter/fusion")
+    app.text_area(key="model-options-research").set_value(json.dumps(options)).run()
+    assert not app.exception
+    assert not app.button(key="research-answer").disabled
+    assert app.session_state["query_result"] == saved
+    app.download_button[0].click().run()
+    assert app.session_state["query_result"] == saved
+    folder = tmp_path / "second-library"
+    folder.mkdir()
+    app.text_input(key="pdf-directory").set_value(str(folder)).run()
+    assert app.text_input(key="model-research").value == "openrouter/fusion"
+    assert json.loads(app.text_area(key="model-options-research").value) == options
+    assert app.text_input(key="model-synthesis").value == "configured-synthesis"
+    assert calls == []
+
+
+@pytest.mark.parametrize("invalid", [
+    "{", "[]", "null", '{"model": "override"}',
+    '{"extra_body": {"messages": []}}', '{"stream": true}',
+    '{"extra_body": {"api_key": "override"}}',
+])
+def test_invalid_model_options_block_answers_not_saved_results_or_search(app, tmp_path, monkeypatch, invalid):
+    app, calls = app
+    settings = Settings(
+        pdf_dir=tmp_path / "papers", base_url="http://127.0.0.1:9/v1",
+        api_key=SecretStr("local-test-key"),
+        models=config.Models(**{
+            stage: config.StageModel(model="local-test-model")
+            for stage in ("breakdown", "research", "synthesis")
+        }),
+    )
+    monkeypatch.setattr(config, "load_settings", lambda: settings)
+    app.run()
+    for stage in ("breakdown", "research", "synthesis"):
+        app.text_input(key=f"model-{stage}").set_value("local-test-model")
+    saved = saved_answer()
+    app.session_state["query_result"] = saved
+    app.text_area(key="model-options-research").set_value(invalid).run()
+    assert not app.exception
+    assert any("Research model settings:" in e.value for e in app.error)
+    assert app.button(key="research-answer").disabled
+    assert not app.button(key="research-search").disabled
+    assert app.session_state["query_result"] == saved
+    app.download_button[0].click().run()
+    assert app.session_state["query_result"] == saved
+    app.text_area(key="model-options-research").set_value("{}").run()
+    assert not app.error
+    assert not app.button(key="research-answer").disabled
+    assert app.session_state["query_result"] == saved
+    app.text_input(key="model-synthesis").set_value("   ").run()
+    assert app.button(key="research-answer").disabled
+    assert any("PAPERRAG_SYNTHESIS_MODEL" in warning.value for warning in app.warning)
+    assert calls == []
