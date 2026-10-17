@@ -16,7 +16,35 @@ st.set_page_config(page_title="PaperRAG", page_icon=None, layout="wide")
 st.title("PaperRAG")
 st.caption("Local papers · physical-page evidence · bounded research")
 settings = load_settings()
+directory = st.text_input("Local PDF directory", value=str(settings.pdf_dir), key="pdf-directory")
+try:
+    if not directory.strip():
+        raise ValueError("Local PDF directory must not be blank.")
+    resolved_directory = Path(directory).expanduser().resolve()
+    if not resolved_directory.exists():
+        raise ValueError(f"Local PDF directory does not exist: {resolved_directory}")
+    if not resolved_directory.is_dir():
+        raise ValueError(f"Local PDF directory is not a directory: {resolved_directory}")
+except (ValueError, OSError, RuntimeError) as exc:
+    st.error(str(exc))
+    st.stop()
+settings = settings.model_copy(update={
+    "pdf_dir": resolved_directory,
+    "data_dir": resolved_directory / ".paperrag",
+})
+canonical_directory = str(resolved_directory)
+previous_directory = st.session_state.get("active_pdf_directory")
+if previous_directory is not None and previous_directory != canonical_directory:
+    library_keys = {
+        "selected_documents", "query_result", "query_error", "preview_chunk",
+        "ingest_report", "research-question", "research-scope", "library-page",
+    }
+    for key in list(st.session_state):
+        if key in library_keys or key.startswith(("select-", "view-")):
+            del st.session_state[key]
+st.session_state["active_pdf_directory"] = canonical_directory
 st.caption(f"Shared index: {settings.data_dir}")
+st.caption("Each folder has its own index. Existing project data is not moved; changing folders does not ingest PDFs.")
 st.info("Local parsing, OCR and search stay on this machine. Research answer sends retrieved excerpts and metadata to your configured endpoint; hosted endpoints receive that data.")
 
 
@@ -49,22 +77,29 @@ def source_cards(sources):
                     st.warning(str(exc))
 
 
+try:
+    with Store(settings) as store:
+        stats = store.stats()
+        page = st.session_state.get("library-page", 1)
+        documents = store.documents(offset=(page - 1) * 25)
+except Exception as exc:
+    st.error(f"Cannot open library storage at {settings.data_dir}: {exc}")
+    st.stop()
+
+
 library, research_tab = st.tabs(["Library", "Research"])
 with library:
     st.subheader("Committed library")
     if st.button("Refresh library"):
         st.rerun()
-    with Store(settings) as store:
-        stats = store.stats()
-        cols = st.columns(4)
-        for col, key in zip(cols, ("documents", "pages", "chunks", "empty_pages")):
-            col.metric(key.replace("_", " ").title(), stats[key])
-        if stats["pending"]:
-            st.warning("An interrupted commit is pending reconciliation. Run ingest or paperrag index to recover it.")
-        with st.expander("Index readiness"):
-            st.json(stats["indexes"])
-        page = st.number_input("Library page", min_value=1, max_value=max(1, (stats["documents"] + 24) // 25), value=1, step=1)
-        documents = store.documents(offset=(page - 1) * 25)
+    cols = st.columns(4)
+    for col, key in zip(cols, ("documents", "pages", "chunks", "empty_pages")):
+        col.metric(key.replace("_", " ").title(), stats[key])
+    if stats["pending"]:
+        st.warning("An interrupted commit is pending reconciliation. Run ingest or paperrag index to recover it.")
+    with st.expander("Index readiness"):
+        st.json(stats["indexes"])
+    st.number_input("Library page", min_value=1, max_value=max(1, (stats["documents"] + 24) // 25), value=1, step=1, key="library-page")
     selected = set(st.session_state.get("selected_documents", []))
     for document in documents:
         doc_id = document["document_id"]
@@ -78,14 +113,13 @@ with library:
     st.session_state["selected_documents"] = sorted(selected)
     st.caption(f"{len(selected)} selected across library pages")
     with st.form("ingest"):
-        directory = st.text_input("Local PDF directory", value=str(settings.pdf_dir))
         force_ocr = st.checkbox("Force local OCR on every page")
         submitted = st.form_submit_button("Ingest directory")
     if submitted:
         try:
             with st.status("Indexing local PDFs", expanded=True) as status:
                 live = st.empty()
-                report = Ingestor(settings, on_progress=lambda event: live.text(event.message)).ingest_paths([Path(directory)], force_ocr=force_ocr)
+                report = Ingestor(settings, on_progress=lambda event: live.text(event.message)).ingest_paths([settings.pdf_dir], force_ocr=force_ocr)
                 status.update(label="Indexing completed with failures" if report.failed else "Index ready", state="error" if report.failed else "complete")
             st.session_state["ingest_report"] = report.model_dump()
         except Exception as exc:

@@ -44,15 +44,19 @@ Retrieved excerpts and their metadata are sent to the configured endpoint, and p
 
 ## Web interface
 
-With the editable install above, `paperrag ui` can run from any directory: it uses the checkout's `.env` and `paperrag.toml`, and resolves relative paths (including the default `data/` and `papers/`) from the checkout root. Exported environment variables still override `.env`; files in the launch directory are not used. Non-editable installs use the launch directory.
+With the editable install above, `paperrag ui` can run from any directory: it uses the checkout's `.env` and `paperrag.toml`, and resolves the initial PDF directory from the checkout root. Exported environment variables still override `.env`; files in the launch directory are not used. Non-editable installs use the launch directory.
 
-1. **Add papers.** In **Library**, enter a PDF directory and click **Ingest directory**, then **Refresh library** to update counts.
+The **Local PDF directory** field selects an existing folder. Enter or blur switches immediately to that folder's independent index at `<resolved PDF directory>/.paperrag/`, shown as **Shared index**. Empty folders are valid; missing folders and conflicting storage show an error without falling back. The UI overrides configured `data_dir`/`PAPERRAG_DATA_DIR`; CLI storage settings are unchanged. Each library keeps its own SQLite manifest, Lance chunks, page/staging cache, lock, and model cache. Existing project `data/` is not moved, merged, or deleted: ingest PDFs to build each new library. Switching folders clears prior selections, research results, previews, and ingest reports; it does not ingest or call models.
+
+1. **Add papers.** Select **Local PDF directory**, then in **Library** click **Ingest directory** and **Refresh library** to update counts.
 2. **Choose a scope.** Pick papers in **Library** or search the whole collection; in **Research**, choose **All indexed papers** or **Selected papers**.
 3. **Search or generate.** **Search excerpts** retrieves local evidence without credentials. **Research answer** runs the configured models: retrieved excerpts are sent to that endpoint.
 4. **Inspect the evidence.** Review the answer, hypotheses and limitations, and the fact-check table. Expand a source card and use **View page [S…]** to inspect the physical PDF page or download the original; source actions reuse the saved result, not new model calls.
 5. **Save your response.** With a completed **Research answer** on screen, **Save response** downloads the displayed answer, its structured analysis, fact checks, and exact indexed source excerpts as `paperrag-research-response.md`; no additional research call runs.
 
-Editing inputs, previewing, and downloading do not initiate new research. If an original file is changed or missing, its indexed excerpts remain available but the cited page cannot be previewed or downloaded until the PDF is re-ingested.
+Editing inputs, previewing, and downloading do not initiate new research. If an original file is changed or missing, its indexed excerpts remain available but the cited page cannot be previewed or downloaded. Re-ingest changed PDFs to update their indexed evidence.
+
+PDF source paths remain absolute. Moving a library or its PDFs does not make previews portable; unchanged bytes at a new path may be skipped as a duplicate. Restore the original path or build a fresh index to restore previews.
 
 ## CLI guide
 
